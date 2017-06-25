@@ -5,6 +5,23 @@ require 'uri'
 require 'net/http'
 require 'openssl'
 
+require 'optparse'
+
+options = {}
+OptionParser.new do |o|
+  o.banner = 'Usage: call_log.rb [options] [MAX_SIZE]'
+
+  o.on('-r', '--regex REGEX', Regexp, 'Filter calls (and total aggregate) via the NAME column') do |re|
+    options[:regex] = re
+  end
+end.parse!
+
+options[:max_size] = if (arg = ARGV[0])
+                       Integer(arg)
+                     else
+                       15
+                     end
+
 HOST = '192.168.1.254'.freeze
 
 # http://stackoverflow.com/questions/4136248/how-to-generate-a-human-readable-time-range-using-ruby-on-rails
@@ -148,13 +165,15 @@ session_token = login(http, gen_password(app_token, challenge))
 
 calls = get_call_logs(http, session_token)
 
-max = if (arg = ARGV[0])
-        Integer(arg)
-      else
-        15
-      end
+batch = calls.first(options.fetch(:max_size))
+if (re = options[:regex])
+  batch = batch.select { |r| r.fetch('name').match(re) }
+  if batch.empty?
+    warn('No match, exiting')
+    exit 0
+  end
+end
 
-batch = calls.first(max)
 batch.reduce(0) do |sum, r|
   sum += if r.fetch('type') == 'missed'
            0
