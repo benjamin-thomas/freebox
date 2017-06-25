@@ -18,6 +18,12 @@ def humanize(secs)
   end.compact.reverse.join(' ')
 end
 
+def pretty_print_number(number)
+  return number if number.length != 10
+
+  number.reverse.scan(/../).join('.').reverse
+end
+
 def get_uri(path)
   URI.parse("https://#{HOST}" + path)
 end
@@ -149,24 +155,24 @@ max = if (arg = ARGV[0])
       end
 
 batch = calls.first(max)
-longuest = ->(param) { batch.max_by { |c| c.fetch(param).length }.fetch(param).length }
-longuest_number = longuest.call('number')
+longuest = ->(param) { batch.max_by { |c| c.fetch(param).length }.fetch(param) }
+longuest_number = pretty_print_number(longuest.call('number'))
 longuest_name = longuest.call('name')
 longuest_type = longuest.call('type')
 
 lines = batch.map do |r|
   sprintf(
-    "  %.16s  |  %-#{longuest_name}s  |  %-#{longuest_number}s  |  %-#{longuest_type}s  |  %s\n",
+    "  %.16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s\n",
     Time.at(r.fetch('datetime')),
     r.fetch('name'),
-    r.fetch('number'),
+    pretty_print_number(r.fetch('number')),
     r.fetch('type'),
     humanize(r.fetch('duration')).rjust(22),
   )
 end
 
 printf(
-  "  %-16s  |  %-#{longuest_name}s  |  %-#{longuest_number}s  |  %-#{longuest_type}s  |  %s\n",
+  "  %-16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s\n",
   'TIMESTAMP',
   'NAME',
   'NUMBER',
