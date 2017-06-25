@@ -9,11 +9,11 @@ HOST = '192.168.1.254'.freeze
 
 # http://stackoverflow.com/questions/4136248/how-to-generate-a-human-readable-time-range-using-ruby-on-rails
 def humanize(secs)
-  translations = [[60, :seconds], [60, :minutes], [24, :hours], [1000, :days]]
+  translations = [[60, :s], [60, :m], [24, :h], [1000, :d]]
   translations.map do |count, name|
     if secs > 0
       secs, n = secs.divmod(count)
-      "#{n.to_i} #{name}"
+      sprintf("%02d%s", n, name)
     end
   end.compact.reverse.join(' ')
 end
@@ -155,29 +155,40 @@ max = if (arg = ARGV[0])
       end
 
 batch = calls.first(max)
+batch.reduce(0) do |sum, r|
+  sum += if r.fetch('type') == 'missed'
+           0
+         else
+           r.fetch('duration')
+         end
+  r['total_duration'] = sum
+end
 longuest = ->(param) { batch.max_by { |c| c.fetch(param).length }.fetch(param) }
 longuest_number = pretty_print_number(longuest.call('number'))
 longuest_name = longuest.call('name')
 longuest_type = longuest.call('type')
 
+MAX_DURATION_LEN = '99d 23h 59m 59s'.length
 lines = batch.map do |r|
   sprintf(
-    "  %.16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s\n",
+    "  %.16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s  |  %s\n",
     Time.at(r.fetch('datetime')),
     r.fetch('name'),
     pretty_print_number(r.fetch('number')),
     r.fetch('type'),
-    humanize(r.fetch('duration')).rjust(22),
+    humanize(r.fetch('duration')).rjust(MAX_DURATION_LEN),
+    humanize(r.fetch('total_duration')).rjust(MAX_DURATION_LEN),
   )
 end
 
 printf(
-  "  %-16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s\n",
+  "  %-16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s | %s\n",
   'TIMESTAMP',
   'NAME',
   'NUMBER',
   'TYPE',
-  'DURATION',
+  'DURATION'.rjust(MAX_DURATION_LEN),
+  'TOTAL'.rjust(MAX_DURATION_LEN),
 )
 
 longuest_line = lines.max_by(&:length)
