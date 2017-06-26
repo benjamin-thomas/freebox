@@ -4,23 +4,29 @@ require 'json'
 require 'uri'
 require 'net/http'
 require 'openssl'
+require 'date'
 
 require 'optparse'
 
-options = {}
+options = {
+  all: false,
+  max_size: nil,
+}
 OptionParser.new do |o|
   o.banner = 'Usage: call_log.rb [options] [MAX_SIZE]'
 
   o.on('-r', '--regex REGEX', Regexp, 'Filter calls (and total aggregate) via the NAME column') do |re|
     options[:regex] = re
   end
-end.parse!
 
-options[:max_size] = if (arg = ARGV[0])
-                       Integer(arg)
-                     else
-                       15
-                     end
+  o.on('-a', '--all', 'Filter all calls (default is today)') do
+    options[:all] = true
+  end
+
+  o.on('-m', '--max-size SIZE', Integer, 'Limit list by X count') do |max|
+    options[:max_size] = max
+  end
+end.parse!
 
 HOST = '192.168.1.254'.freeze
 
@@ -165,7 +171,18 @@ session_token = login(http, gen_password(app_token, challenge))
 
 calls = get_call_logs(http, session_token)
 
-batch = calls.first(options.fetch(:max_size))
+if !options.fetch(:all)
+  calls = calls.select { |r| Time.at(r.fetch('datetime')).to_date == Date.today }
+end
+
+max_size = options.fetch(:max_size)
+
+batch = if max_size
+          calls.first(max_size)
+        else
+          calls
+        end
+
 if (re = options[:regex])
   batch = batch.select { |r| r.fetch('name').match(re) }
   if batch.empty?
