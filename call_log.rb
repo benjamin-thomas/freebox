@@ -19,6 +19,10 @@ OptionParser.new do |o|
     options[:regex] = re
   end
 
+  o.on('-n', '--negate-regex REGEX', Regexp, 'Exclude calls (and total aggregate) via the NAME column') do |re|
+    options[:neregex] = re
+  end
+
   o.on('-a', '--all', 'Filter all calls (default is today)') do
     options[:all] = true
   end
@@ -185,6 +189,14 @@ batch = if max_size
 
 if (re = options[:regex])
   batch = batch.select { |r| r.fetch('name').match(re) }
+  if batch.empty?
+    warn('No match, exiting')
+    exit 0
+  end
+end
+
+if (re = options[:neregex])
+  batch = batch.reject { |r| r.fetch('name').match(re) }
   if batch.empty?
     warn('No match, exiting')
     exit 0
