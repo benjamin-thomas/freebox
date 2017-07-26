@@ -8,12 +8,14 @@ require 'date'
 
 require 'optparse'
 
+APP_ID = APP_NAME = 'fbx_scripts'.freeze
+
 options = {
   all: false,
   max_size: nil,
 }
 OptionParser.new do |o|
-  o.banner = 'Usage: call_log.rb [options] [MAX_SIZE]'
+  o.banner = 'Usage: fbx_call_log [options] [MAX_SIZE]'
 
   o.on('-r', '--regex REGEX', Regexp, 'Filter calls (and total aggregate) via the NAME column') do |re|
     options[:regex] = re
@@ -85,15 +87,15 @@ def request_auth(http)
   )
 
   req.body = JSON(
-    app_id: 'get_call_logs',
-    app_name: 'Get call logs',
+    app_id: APP_NAME,
+    app_name: APP_NAME,
     app_version: '0.0.1',
     device_name: Socket.gethostname
   )
   res = http.request(req)
   j = JSON.parse(res.body)
 
-  j.fetch('success') || raise('Request auth failed!')
+  j.fetch('success') || fail('Request auth failed!')
 
   result = j.fetch('result')
   track_id = result.fetch('track_id')
@@ -132,7 +134,7 @@ def login(http, password)
   )
 
   req.body = JSON(
-    app_id: 'get_call_logs',
+    app_id: APP_ID,
     password: password,
   )
 
@@ -141,7 +143,7 @@ def login(http, password)
 
   if !j.fetch('success')
     warn(j)
-    raise('Loging failed!')
+    raise('Login failed!')
   end
 
   result = j.fetch('result')
