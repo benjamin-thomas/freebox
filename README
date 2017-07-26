@@ -1,6 +1,0 @@
-Usage
-
-```bash
-./call_log.rb # prints last 15 calls to terminal
-./call_log.rb 5 # last 5 calls
-```
