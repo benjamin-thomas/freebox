@@ -1,0 +1,259 @@
+#!/usr/bin/ruby
+
+require 'json'
+require 'uri'
+require 'net/http'
+require 'openssl'
+
+require 'optparse'
+
+# Documentation
+# =============
+# https://dev.freebox.fr/sdk/os/contacts/
+
+APP_ID = APP_NAME = 'fbx_scripts'.freeze
+
+BANNER = 'Usage: fbx_set_name NUMBER [DISPLAY_NAME]'.freeze
+OptionParser.new do |o|
+  o.banner = BANNER
+end.parse!
+
+str_number = ARGV[0] || (
+  warn(BANNER)
+  exit(1)
+)
+
+new_name = ARGV[1]
+
+number = str_number.gsub(/\D/, '')
+
+if number.size != 10
+  warn("Does not look like a number: #{number}")
+  exit(1)
+end
+
+HOST = '192.168.1.254'.freeze
+
+def get_uri(path)
+  URI.parse("https://#{HOST}" + path)
+end
+
+def env_file
+  File.expand_path('~/.env/freebox')
+end
+
+def read_env_lines
+  File.exist?(env_file) || raise("Create #{env_file}")
+  File.readlines(env_file)
+end
+
+def env_lines
+  @env_lines ||= read_env_lines
+end
+
+def load_env(name)
+  found = env_lines.find { |l| l.start_with?(name) }
+  return if found.nil?
+
+  found.split('=').last.chomp
+end
+
+def post_json(uri)
+  Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
+end
+
+def request_auth(http)
+  req = post_json(
+    get_uri('/api/v4/login/authorize/')
+  )
+
+  req.body = JSON(
+    app_id: APP_ID,
+    app_name: APP_NAME,
+    app_version: '0.0.1',
+    device_name: Socket.gethostname
+  )
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  j.fetch('success') || raise('Request auth failed!')
+
+  result = j.fetch('result')
+  track_id = result.fetch('track_id')
+  app_token = result.fetch('app_token')
+
+  puts "Update env file: #{env_file}, with tokens below"
+  puts "TRACK_ID=#{track_id}"
+  puts "APP_TOKEN=#{app_token}"
+  exit(1)
+end
+
+def auth_track(http, track)
+  req = http.get(
+    get_uri("/api/v4/login/authorize/#{track}")
+  )
+
+  res = JSON.parse(req.body)
+  res.fetch('success') || raise('Could not auth track')
+
+  result = res.fetch('result')
+  status = result.fetch('status')
+  challenge = result.fetch('challenge')
+  _password_salt = result.fetch('password_salt')
+
+  status != 'granted' && raise("Unauthorized track : status=#{status}")
+  challenge
+end
+
+def gen_password(token, challenge)
+  OpenSSL::HMAC.hexdigest('sha1', token, challenge)
+end
+
+def login(http, password)
+  req = post_json(
+    get_uri('/api/v4/login/session/')
+  )
+
+  req.body = JSON(
+    app_id: APP_ID,
+    password: password,
+  )
+
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  if !j.fetch('success')
+    warn(j)
+    raise('Login failed!')
+  end
+
+  result = j.fetch('result')
+  result.fetch('session_token')
+end
+
+def get_contacts(http, session_token)
+  # Get a list of contacts
+  # GET /api/v4/contact/
+
+  req = Net::HTTP::Get.new(get_uri('/api/v4/contact/?limit=-1'))
+  req.add_field('X-Fbx-App-Auth', session_token)
+  req.add_field('Content-Type', 'application/json; charset=utf-8')
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  j.fetch('success') || raise("Failed getting call log #{j}")
+
+  j.fetch('result')
+end
+
+def update_contact_name(http, session_token, id, name)
+  # Update a contact entry
+  # PUT /api/v4/contact/{id}
+  req = Net::HTTP::Put.new(get_uri("/api/v4/contact/#{id}"))
+  req.add_field('X-Fbx-App-Auth', session_token)
+  req.add_field('Content-Type', 'application/json; charset=utf-8')
+  req.body = JSON(display_name: name)
+
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  j.fetch('success') || raise("Failed setting new name #{j}")
+
+  # j.fetch('result')
+  :OK
+end
+
+def create_contact(http, session_token, name, number)
+  # Create a contact
+  # POST /api/v4/contact/
+  req = Net::HTTP::Post.new(get_uri('/api/v4/contact/'))
+  req.add_field('X-Fbx-App-Auth', session_token)
+  req.add_field('Content-Type', 'application/json; charset=utf-8')
+  req.body = JSON(
+    display_name: name,
+  )
+
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  j.fetch('success') || raise("Failed creating contact #{j}")
+
+  contact_id = j.fetch('result').fetch('id')
+
+  # Create a contact number
+  # POST /api/v4/[number,address,url,email]/
+  req = Net::HTTP::Post.new(get_uri('/api/v4/number/'))
+  req.add_field('X-Fbx-App-Auth', session_token)
+  req.add_field('Content-Type', 'application/json; charset=utf-8')
+  req.body = JSON(
+    contact_id: contact_id,
+    number: number,
+  )
+
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  j.fetch('success') || raise("Failed creating contact number #{j}")
+
+  # j.fetch('result')
+  :OK
+end
+
+def find_contact_for_number(number, contact_list)
+  contact_list.find do |c|
+    numbers = c.fetch(:numbers).map { |n| n.fetch(:number) }
+    numbers.include?(number)
+  end
+end
+
+track_id = load_env('TRACK_ID')
+app_token = load_env('APP_TOKEN')
+
+http = Net::HTTP.new(HOST, 443)
+http.use_ssl = true
+http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+[track_id, app_token].any?(&:nil?) && request_auth(http)
+
+challenge = auth_track(http, track_id)
+
+session_token = login(http, gen_password(app_token, challenge))
+
+contacts = get_contacts(http, session_token)
+
+list = contacts.map do |c|
+  numbers = c.fetch('numbers').map do |n|
+    {
+      number: n.fetch('number'),
+      type: n.fetch('type'),
+    }
+  end
+
+  {
+    id: c.fetch('id'),
+    display_name: c.fetch('display_name'),
+    numbers: numbers,
+  }
+end
+
+c = find_contact_for_number(number, list)
+
+res = if c
+        id = c.fetch(:id)
+        old_name = c.fetch(:display_name)
+        puts "Found contact: #{old_name} (id=#{id})"
+
+        new_name ||= (
+          print 'New name: '
+          STDIN.gets.chomp
+        )
+        update_contact_name(http, session_token, id, new_name)
+      else
+        name = new_name || (
+          print 'Name: '
+          STDIN.gets.chomp
+        )
+        create_contact(http, session_token, name, number)
+      end
+
+p(res)
