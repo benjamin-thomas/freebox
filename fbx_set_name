@@ -4,6 +4,7 @@ require 'json'
 require 'uri'
 require 'net/http'
 require 'openssl'
+require 'readline'
 
 require 'optparse'
 
@@ -244,14 +245,12 @@ res = if c
         puts "Found contact: #{old_name} (id=#{id})"
 
         new_name ||= (
-          print 'New name: '
-          STDIN.gets.chomp
+          Readline.readline("New name > ")
         )
         update_contact_name(http, session_token, id, new_name)
       else
         name = new_name || (
-          print 'Name: '
-          STDIN.gets.chomp
+          Readline.readline("Name > ")
         )
         create_contact(http, session_token, name, number)
       end
