@@ -197,10 +197,11 @@ end
 
 if (re = options[:neregex])
   batch = batch.reject { |r| r.fetch('name').match(re) }
-  if batch.empty?
-    warn('No match, exiting')
-    exit 0
-  end
+end
+
+if batch.empty?
+  warn('Nothing to display, exiting')
+  exit 0
 end
 
 batch.reduce(0) do |sum, r|
