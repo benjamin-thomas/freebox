@@ -238,7 +238,7 @@ lines = batch.map do |r|
 end
 
 printf(
-  "  %-16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s | %s\n",
+  "  %-16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s  | %s\n",
   'TIMESTAMP',
   'NAME',
   'NUMBER',
