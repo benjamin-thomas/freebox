@@ -221,11 +221,16 @@ longuest_type = longuest.call('type')
 
 MAX_DURATION_LEN = '99d 23h 59m 59s'.length
 lines = batch.map do |r|
+  name = r.fetch('name')
+  number = r.fetch('number')
+  if name == number
+    name = '???'
+  end
   sprintf(
     "  %.16s  |  %-#{longuest_name.length}s  |  %-#{longuest_number.length}s  |  %-#{longuest_type.length}s  |  %s  |  %s\n",
     Time.at(r.fetch('datetime')),
-    r.fetch('name'),
-    pretty_print_number(r.fetch('number')),
+    name,
+    pretty_print_number(number),
     r.fetch('type'),
     humanize(r.fetch('duration')).rjust(MAX_DURATION_LEN),
     humanize(r.fetch('total_duration')).rjust(MAX_DURATION_LEN),
