@@ -1,0 +1,210 @@
+#!/usr/bin/ruby
+
+# NOTE:
+# Il faut aller dans les paramètres de la freebox (web UI)
+# Puis : Gestion des accès > Applications > Éditer > Modification des réglages de la Freebox > cocher
+
+require 'json'
+require 'uri'
+require 'net/http'
+require 'openssl'
+require 'date'
+
+require 'optparse'
+
+APP_ID = APP_NAME = 'fbx_scripts'.freeze
+
+options = {
+  all: false,
+  max_size: nil,
+}
+OptionParser.new do |o|
+  o.banner = 'Usage: fbx_mac_filter on|off'
+
+end.parse!
+
+flip = ARGV[0]
+if !['on', 'off'].include?(flip)
+  abort('Must give arg: on|off')
+end
+
+HOST = '192.168.1.254'.freeze
+
+def get_uri(path)
+  URI.parse("https://#{HOST}" + path)
+end
+
+def env_file
+  File.expand_path('~/.env/freebox')
+end
+
+def read_env_lines
+  File.exist?(env_file) || raise("Create #{env_file}")
+  File.readlines(env_file)
+end
+
+def env_lines
+  @env_lines ||= read_env_lines
+end
+
+def load_env(name)
+  found = env_lines.find { |l| l.start_with?(name) }
+  return if found.nil?
+
+  found.split('=').last.chomp
+end
+
+def post_json(uri)
+  Net::HTTP::Post.new(uri, 'Content-Type' => 'application/json')
+end
+
+def request_auth(http)
+  req = post_json(
+    get_uri('/api/v4/login/authorize/')
+  )
+
+  req.body = JSON(
+    app_id: APP_NAME,
+    app_name: APP_NAME,
+    app_version: '0.0.1',
+    device_name: Socket.gethostname
+  )
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  j.fetch('success') || fail('Request auth failed!')
+
+  result = j.fetch('result')
+  track_id = result.fetch('track_id')
+  app_token = result.fetch('app_token')
+
+  puts "Update env file: #{env_file}, with tokens below"
+  puts "TRACK_ID=#{track_id}"
+  puts "APP_TOKEN=#{app_token}"
+
+  puts <<-EOS
+    NOTE: Il faut aller dans les paramètres de la freebox (web UI)
+          Puis : Gestion des accès > Applications > Éditer > Modification des réglages de la Freebox > cocher
+  EOS
+  exit(1)
+end
+
+def auth_track(http, track)
+  req = http.get(
+    get_uri("/api/v4/login/authorize/#{track}")
+  )
+
+  res = JSON.parse(req.body)
+  res.fetch('success') || raise('Could not auth track')
+
+  result = res.fetch('result')
+  status = result.fetch('status')
+  challenge = result.fetch('challenge')
+  _password_salt = result.fetch('password_salt')
+
+  status != 'granted' && raise("Unauthorized track : status=#{status}")
+  challenge
+end
+
+def gen_password(token, challenge)
+  OpenSSL::HMAC.hexdigest('sha1', token, challenge)
+end
+
+def login(http, password)
+  req = post_json(
+    get_uri('/api/v4/login/session/')
+  )
+
+  req.body = JSON(
+    app_id: APP_ID,
+    password: password,
+  )
+
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  if !j.fetch('success')
+    warn(j)
+    raise('Login failed!')
+  end
+
+  result = j.fetch('result')
+  result.fetch('session_token')
+end
+
+def update_state!(http, session_token, flip)
+  wanted_state = case flip
+                 when 'on'
+                   'whitelist'
+                 when 'off'
+                   'disabled'
+                 else
+                   fail "Flip value not valid: '#{flip}'"
+                 end
+
+  uri = get_uri('/api/v4/wifi/config/')
+  req = Net::HTTP::Put.new(uri, 'Content-Type' => 'application/json')
+
+  req.add_field('X-Fbx-App-Auth', session_token)
+  req.add_field('Content-Type', 'application/json; charset=utf-8')
+
+  req.body = JSON(
+    mac_filter_state: wanted_state
+  )
+
+  res = http.request(req)
+  j = JSON.parse(res.body)
+  p(j)
+end
+
+def get_filter_state(http, session_token)
+  # GET /api/v2/wifi/config/
+  req = Net::HTTP::Get.new(get_uri('/api/v4/wifi/config/'))
+
+  req.add_field('X-Fbx-App-Auth', session_token)
+  req.add_field('Content-Type', 'application/json; charset=utf-8')
+  res = http.request(req)
+  j = JSON.parse(res.body)
+
+  j.fetch('success') || raise('Failed getting filter state')
+
+  j.fetch('result')
+end
+
+def read_state!
+  track_id = load_env('TRACK_ID')
+  app_token = load_env('APP_TOKEN')
+
+  http = Net::HTTP.new(HOST, 443)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  [track_id, app_token].any?(&:nil?) && request_auth(http)
+
+  challenge = auth_track(http, track_id)
+
+  session_token = login(http, gen_password(app_token, challenge))
+
+  filter_state = get_filter_state(http, session_token)
+  p({filter_state: filter_state.fetch('mac_filter_state')})
+end
+
+def switch!(flip)
+  track_id = load_env('TRACK_ID')
+  app_token = load_env('APP_TOKEN')
+
+  http = Net::HTTP.new(HOST, 443)
+  http.use_ssl = true
+  http.verify_mode = OpenSSL::SSL::VERIFY_NONE
+
+  [track_id, app_token].any?(&:nil?) && request_auth(http)
+
+  challenge = auth_track(http, track_id)
+
+  session_token = login(http, gen_password(app_token, challenge))
+
+  filter_state = update_state!(http, session_token, flip)
+  read_state!
+end
+
+switch!(flip)
